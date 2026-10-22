@@ -1,0 +1,79 @@
+name: secunda-payments
+x-app: &app
+  build: .
+  environment: &environment
+    DATABASE_URL: postgresql+asyncpg://payments:payments@postgres:5432/payments
+    RABBITMQ_URL: amqp://payments:payments@rabbitmq:5672/
+    API_KEY: ${API_KEY:-local-development-key}
+    WEBHOOK_ALLOWED_HOSTS: '${WEBHOOK_ALLOWED_HOSTS:-["webhook"]}'
+    RETRY_BASE_DELAY: ${RETRY_BASE_DELAY:-1}
+    GATEWAY_MIN_DELAY: ${GATEWAY_MIN_DELAY:-2}
+    GATEWAY_MAX_DELAY: ${GATEWAY_MAX_DELAY:-5}
+    GATEWAY_SUCCESS_RATE: ${GATEWAY_SUCCESS_RATE:-0.9}
+  init: true
+  restart: unless-stopped
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: payments
+      POSTGRES_PASSWORD: payments
+      POSTGRES_DB: payments
+    ports: ["127.0.0.1:55437:5432"]
+    volumes: ["pgdata:/var/lib/postgresql/data"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U payments -d payments"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  rabbitmq:
+    image: rabbitmq:4.1-management-alpine
+    environment:
+      RABBITMQ_DEFAULT_USER: payments
+      RABBITMQ_DEFAULT_PASS: payments
+    ports: ["127.0.0.1:5678:5672", "127.0.0.1:15678:15672"]
+    volumes: ["rabbitdata:/var/lib/rabbitmq"]
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 3s
+      timeout: 10s
+      retries: 30
+
+  migrate:
+    <<: *app
+    command: ["alembic", "upgrade", "head"]
+    restart: "no"
+    depends_on:
+      postgres: {condition: service_healthy}
+
+  api:
+    <<: *app
+    ports: ["127.0.0.1:18880:8000"]
+    depends_on:
+      migrate: {condition: service_completed_successfully}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import os,urllib.request; urllib.request.urlopen(urllib.request.Request('http://localhost:8000/health',headers={'X-API-Key':os.environ['API_KEY']}),timeout=3)"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  consumer:
+    <<: *app
+    command: ["python", "-m", "app.worker"]
+    depends_on:
+      migrate: {condition: service_completed_successfully}
+      rabbitmq: {condition: service_healthy}
+
+  webhook:
+    image: python:3.12-slim
+    profiles: ["demo"]
+    command: ["python", "/demo/webhook.py"]
+    ports: ["127.0.0.1:18881:8080"]
+    volumes: ["./scripts/webhook.py:/demo/webhook.py:ro"]
+
+volumes:
+  pgdata:
+  rabbitdata:
+

@@ -1,0 +1,18 @@
+[project]
+name = "secunda-payments"
+version = "0.1.0"
+description = "Asynchronous payment processing with a transactional outbox"
+requires-python = ">=3.12"
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+pythonpath = ["."]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "ASYNC"]
+
